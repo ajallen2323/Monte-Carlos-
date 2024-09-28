@@ -1,0 +1,238 @@
+---
+title: "Portfolio 3 - Monte Carlos"
+author: "Angelina Allen"
+date: "2024-05-07"
+output: 
+  html_document:
+    self_contained: true
+---
+
+```{r setup, include=FALSE, purl=FALSE}
+# Use echo = FALSE for Portfolio assignments
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+```{r metadata, echo=FALSE}
+# Author:  Angelina Allen
+# Date:    2024-05-07
+# Purpose: Portfolio 3- Monte Carlos
+#-------------------------------------------------------------------------------
+```
+
+
+```{r packages}
+# Load packages
+suppressPackageStartupMessages(library("tidyverse")); theme_set(theme_bw())
+library("knitr")
+library(dbplyr)
+```
+
+
+## Introduction
+
+In this portfolio, we are conducting a Monte Carlo study. We are studying the points and interval estimators for the binomial model with an unknown probability of success $p$ when the random variable $Y$ follows a binomial distribution $Bin(n,p)$. We will compare two approaches (Frequentist and Bayesian) and compare them. 
+
+
+For the frequentist approach we will have the point estimator based on the maximum likelihood estimator (MLE). The point estimator is denoted as $\hat{p}=\frac{y}{n}$. 
+$y$ represents the number of successes and $n$ represents the sample size. The asymptotic confidence interval is denoted as $\hat{p}\pm z_{\alpha/2}\sqrt{\frac{\hat{p}_{MLE}(1-\hat{p}_{MLE})}{n}}$. $z_{\frac{\alpha}{2}}$ is the critical value of the standard normal distribution. 
+
+
+For the Bayesian approach, we will have the point estimator denoted as $\hat{p}_{Bayes}=\frac{0.5+y}{1+n}$. This incorporates prior information based on the data. For the interval estimator, we cannot quickly write it down, but it can be computed in R using code. 
+
+
+Then, to compare the estimator, we will compute the mean squared error (MSE) of the point estimators using this formula: $MSE(\hat{p}) = E[(\hat{p} - p)^2]$. In addition, we will compute the coverage of the interval estimators.
+
+
+This study will be conducted for various values of n and p. 
+```{r}
+n <- c(5, 10, 15, 20, 25, 30)
+
+p <- c(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
+```
+
+## Analysis
+
+###Mean Squared Error
+
+```{r}
+df_p <- data.frame(p = p)
+df_n <- data.frame(n = n)
+values <- merge(df_p, df_n)
+```
+
+```{r}
+# Function to calculate Monte Carlo expectation with standard error
+mc_expectation <- function(x) {
+  return(
+    c(mean = mean(x),
+      se   = sd(x)/sqrt(length(x)))
+  )
+}
+```
+
+```{r}
+#Frequentist
+
+#Calculate MSE for each row
+for (i in 1:nrow(values)){
+  n <- values$n[i]
+  p <- values$p[i]
+  x <- rbinom(1e4, size = n, prob = p)
+  theta_hat <- x / n
+  values$freq_MSE[i] <- mc_expectation((theta_hat - p)^2)[[1]]
+}
+
+```
+
+```{r}
+#Baysian
+
+#Calculate MSE for each row
+for (i in 1:nrow(values)){
+  n <- values$n[i]
+  p <- values$p[i]
+  x <- rbinom(1e4, size = n, prob = p)
+  theta_hat <- (0.5 + x) / (1 + n) 
+  values$bays_MSE[i] <- mc_expectation((theta_hat - p)^2)[[1]]
+}
+```
+
+```{r}
+MSEdata <- pivot_longer(values, cols = c(freq_MSE, bays_MSE), 
+                          values_to = "MSE", names_to ="MSEtype")
+```
+
+Below is a faceted line graph that compares the difference in the mean squared error of a Frequentist approach to a Bayesian approach. The graph shows that for every combination of n and p, the Frequentist method produced a higher MSE. As our n value gets larger, the MSE for both methods decreases. Additionally, for every n, the largest MSE is $\approx 0.50$. Another notable observation is as our n value gets larger the more similar the two methods get to their MSE values. For example, when $n = 30$ and $p = 0.8$, the MSE for the Frequentist approach is `r MSEdata[105,4]` and for the Bayesian approach the MSE is `r MSEdata[106,4]`. 
+
+
+```{r}
+
+ggplot(data = MSEdata,
+            aes(x = p,
+                y = MSE, 
+                color = MSEtype)) + 
+  geom_line() + 
+  facet_grid(~n, scales = "free") +
+  labs(x = "Probability (p)",
+       y = "Mean Squared Error (MSE)",
+       color = "Approach",
+       title = "Comparison of Mean Squared Error (MSE) between Frequentist and
+                Bayesian Methods") +
+  scale_color_manual(values = c("red", "blue"), labels = c("Bayesian Approach", "Frequentist Approach")) +
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+```
+
+```{r}
+#MSE Monte Carlo uncertainty
+
+mse_freq <- values$freq_MSE
+mse_bays <- values$bays_MSE
+
+mse_dif <- (mse_freq - mse_bays)^2
+
+mc_expectation(mse_dif)[2]
+
+```
+In the Monte Carlo simulation there is uncertainty created when randomly sampling. Find this uncertainty can help us better understand the reliability and robustness of their results. 
+
+I calculated the estimates of the MSE by looking at the standard errors of the difference between the two methods. The standard error of the MSE for the Monte Carlo study =`r mc_expectation(mse_dif)[2]`.
+
+##Coverage
+
+```{r}
+#Frequentist
+
+#Calculate Coverage for each row
+alpha <- 0.05 
+for (i in 1:nrow(values)){
+  n <- values$n[i]
+  p <- values$p[i]
+  z <- -qnorm(alpha/2)
+  d <- data.frame(x = rbinom(1e4,
+                             size = n,
+                             prob = p)) 
+  ci <- d |>
+    rowwise() |>
+    mutate(
+      # Wald interval
+      p_hat = x/n,
+      lowerbound = p_hat - (z * sqrt(p_hat*(1-p_hat)/n)),
+      upperbound = p_hat + z * sqrt(p_hat*(1-p_hat)/n),
+      Wald = lowerbound < p & p < upperbound
+    ) |>
+    select(Wald)
+  values$freq_cov[i] <- sum(ci$Wald) / length(ci$Wald)
+}
+```
+
+```{r}
+#Bayesian
+
+#Calculate Coverage for each row
+
+alpha <- 0.5
+
+for (i in 1:nrow(values)){
+  n <- values$n[i]
+  p <- values$p[i]
+  x <- rbinom(1e4, size = n, prob = p)
+  b <- qbeta(c(alpha/2, 1-alpha/2), 0.5 + x, 0.5 + n - x)
+  
+  d <- data.frame(lowerbound = b[seq(1, length(b), by = 2)],
+                  upperbound = b[seq(2, length(b), by = 2)]) |>
+         mutate(
+           within = lowerbound < p & p < upperbound)|>
+         select(within)
+  
+  values$bays_cov[i] <- sum(d$within) / length(d$within)
+}
+```
+
+```{r}
+Covdata <- pivot_longer(values, cols = c(freq_cov, bays_cov), 
+                          values_to = "COV", names_to ="Covtype")
+```
+
+The figure below displays a faceted line graph comparing the calculated coverage for the frequentist method versus the Bayesian method. Looking at the graph, we can see that overall, the coverage produced by the frequentist approach is larger than that produced by the Bayesian method. As $n$ increases, the coverage values for the frequentist approach increase. There is no similarity in the two approaches; besides, when we look at $n=5$, we see lines crossing. This may indicate that at a specific $n$ ad $P$, their coverage values are equal.   
+
+   
+```{r}
+ggplot(data = Covdata,
+            aes(x = p,
+                y = COV, 
+                color = Covtype)) + 
+  geom_line() + 
+  facet_grid(~n, scales = "free") +
+  labs(x = "Probability (p)",
+       y = "Coverage",
+       color = "Approach",
+       title = "Comparison of Coverage between Frequentist and
+                Bayesian Methods") +
+  scale_color_manual(values = c("red", "blue"), labels = c("Bayesian Approach", "Frequentist Approach")) +
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+```{r}
+#Coverage Monte Carlo uncertainty
+
+cov_freq <- values$freq_cov
+cov_bays <- values$bays_cov
+
+cov_dif <- (cov_freq - cov_bays)^2
+
+mc_expectation(cov_dif)[2]
+
+```
+
+We will also look at the uncertainty for the difference in Coverage. I calculated the estimates of Coverage by looking at the standard errors of the difference between the two methods. The standard error of the MSE for the Monte Carlo study =`r mc_expectation(cov_dif)[2]`.
+
+##Discussion
+The ultimate goal of this study was to conduct a Monte Carlo study using the Frequentist and Bayesian methods to compare the points and interval estimators for the binomial model with an unknown probability of success. In doing so, we calculated our simulation's mean squared error and coverage and visualized the differences. Additionally, we calculated the uncertainty of the differences of the methods for MSE and Coverage.
+
+In our results, we found that for MSE, the Frequentist method produced a higher MSE as our n value gets larger, the MSE for both methods decreases, and as our n value gets larger, the more similar the two methods get to their MSE values. For Coverage, we found that the coverage produced by the frequentist approach is larger than that produced by the Bayesian method, and as $n$ increases, the coverage values for the frequentist approach increase. 
+
+Lastly, for our uncertainty, we calculated the standard error of the MSE for the Monte Carlo study =`r mc_expectation(mse_dif)[2]` and of the Coverage =`r mc_expectation(cov_dif)[2]`. 
+
